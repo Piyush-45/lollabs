@@ -1,3 +1,4 @@
+
 'use server';
 
 import { generatePdfSummaryFromGemini } from "@/lib/gemini";
@@ -19,8 +20,9 @@ export async function generatePdfSummary(uploadResponse: [
     }
 
     //!!!!!!!!!!!!!!!!!!
-    // const { userId } = await auth(); // ✅ Get user from Clerk
+    const { userId } = await auth(); // ✅ Get user from Clerk
 
+    console.log(userId)
     // if (!userId) {
     //     return { success: false, message: "Unauthorized", data: null };
     // }
@@ -55,7 +57,7 @@ export async function generatePdfSummary(uploadResponse: [
         // ✅ Save summary in database
         const savedSummary = await prisma.pdfSummary.create({
             data: {
-                userId: '5c22dff2-0776-4565-aa0f-d2b0d14ed279', // ✅ Use UUID as userId reference
+                userId: '14f94f32-ab26-4f01-9f9f-8ebb9f86b57f', // ✅ Use UUID as userId reference
                 originalFileUrl: pdfUrl,
                 summaryText,
                 fileName,
@@ -69,4 +71,3 @@ export async function generatePdfSummary(uploadResponse: [
         return { success: false, message: "Error processing the file", data: null };
     }
 }
-
