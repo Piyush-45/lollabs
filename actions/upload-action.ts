@@ -1,32 +1,35 @@
-
 'use server';
 
-import { generatePdfSummaryFromGemini } from "@/lib/gemini";
+import { generatePdfSummaryFromGemini } from "@/lib/gemini"; // Optional if you want to use Gemini
 import { fetchAndExtractPdfText } from "@/lib/langchain";
 import { PrismaClient } from "@prisma/client";
 import { auth } from "@clerk/nextjs/server";
+import { clerkClient } from "@clerk/clerk-sdk-node";
 import { generatePdfSummaryFromGroq } from "@/lib/groq";
 
 const prisma = new PrismaClient();
-export async function generatePdfSummary(uploadResponse: [
-    {
-        serverData: {
-            file: { url: string; name: string };
-        };
-    }
-]) {
+
+type PdfSummaryType = {
+    userId?: string;
+    fileUrl: string;
+    summary: string;
+    title: string;
+    fileName: string;
+};
+
+// ✅ Generate summary from uploaded PDF
+export async function generatePdfSummary(
+    uploadResponse: [
+        {
+            serverData: {
+                file: { url: string; name: string };
+            };
+        }
+    ]
+) {
     if (!uploadResponse || !uploadResponse[0]) {
         return { success: false, message: "File upload failed", data: null };
     }
-
-    //!!!!!!!!!!!!!!!!!!
-    const { userId } = await auth(); // ✅ Get user from Clerk
-
-    console.log(userId)
-    // if (!userId) {
-    //     return { success: false, message: "Unauthorized", data: null };
-    // }
-
 
     const {
         serverData: {
@@ -39,9 +42,11 @@ export async function generatePdfSummary(uploadResponse: [
     }
 
     try {
+        // ✅ Extract text from PDF
         const pdfText = await fetchAndExtractPdfText(pdfUrl);
-        let summaryText;
 
+        // ✅ Generate summary using Groq AI
+        let summaryText;
         try {
             summaryText = await generatePdfSummaryFromGroq(pdfText);
             console.log(summaryText);
@@ -51,23 +56,123 @@ export async function generatePdfSummary(uploadResponse: [
         }
 
         if (!summaryText) {
-            return { success: false, message: "Failed to generate summary", data: null };
+            return {
+                success: false,
+                message: "Failed to generate summary",
+                data: null,
+            };
         }
 
-        // ✅ Save summary in database
-        const savedSummary = await prisma.pdfSummary.create({
+        // ✅ Return generated summary to be saved later
+        return {
+            success: true,
+            message: "Summary generated successfully",
             data: {
-                userId: '14f94f32-ab26-4f01-9f9f-8ebb9f86b57f', // ✅ Use UUID as userId reference
-                originalFileUrl: pdfUrl,
-                summaryText,
+                summary: summaryText,
                 fileName,
-                status: "completed",
+                fileUrl: pdfUrl,
+                title: "", // Optional: you can extract title from summary if needed
             },
-        });
-
-        return { success: true, message: "Summary saved", data: savedSummary };
+        };
     } catch (err) {
         console.error(err);
-        return { success: false, message: "Error processing the file", data: null };
+        return {
+            success: false,
+            message: "Error processing the file",
+            data: null,
+        };
+    }
+}
+
+// ✅ Save summary to database after ensuring user exists
+export async function savePdfSummary({
+    fileUrl,
+    summaryText,
+    fileName,
+    title,
+    userId,
+}: {
+    userId: string;
+    fileUrl: string;
+    summaryText: string;
+    fileName: string;
+    title: string;
+}) {
+    // 🔐 Fetch user details from Clerk
+    const userDetails = await clerkClient.users.getUser(userId);
+    const userEmail = userDetails.emailAddresses[0]?.emailAddress || "";
+    const userName = `${userDetails.firstName ?? ""} ${userDetails.lastName ?? ""}`.trim();
+
+
+    // ✅ Ensure user exists in DB (via upsert)
+    await prisma.user.upsert({
+        where: { id: userId },
+        update: {},
+        create: {
+            id: userId,
+            email: userEmail,
+            fullName: userName,
+        },
+    });
+
+    // ✅ Save summary in DB
+    const result = await prisma.pdfSummary.create({
+        data: {
+            userId,
+            originalFileUrl: fileUrl,
+            summaryText,
+            title,
+            fileName,
+        },
+    });
+
+    return result;
+}
+
+// ✅ Server Action to handle saving the summary
+export async function storePdfSummaryAction({
+    fileUrl,
+    summary,
+    title,
+    fileName,
+}: PdfSummaryType) {
+    console.log("[Action] storePdfSummaryAction called");
+
+    try {
+        const { userId } = await auth(); // 🔐 Get logged-in user
+        console.log("user id from action", userId);
+
+        if (!userId) {
+            return {
+                success: false,
+                message: "User not authenticated",
+            };
+        }
+
+        // ✅ Save summary to DB
+        const savedSummary = await savePdfSummary({
+            userId,
+            fileUrl,
+            summaryText: summary,
+            title,
+            fileName,
+        });
+
+        console.log("[Action] Saved Summary:", savedSummary);
+
+        return {
+            success: true,
+            message: "PDF summary saved successfully",
+            data: savedSummary,
+        };
+    } catch (error) {
+        console.error("Error in storePdfSummaryAction:", error);
+        return {
+            success: false,
+            message:
+                error instanceof Error
+                    ? error.message
+                    : "Error saving PDF summary",
+        };
     }
 }

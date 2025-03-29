@@ -6,9 +6,10 @@ import { Input } from '../ui/input';
 import { z } from 'zod';
 import { useUploadThing } from '@/lib/uploadthing';
 import { toast } from 'sonner';
-import { generatePdfSummary } from '@/actions/upload-action';
-import Summary from '../common/Summary'; // make sure this takes `summaryText` as a prop
+import { generatePdfSummary, storePdfSummaryAction } from '@/actions/upload-action';
+import Summary from '../common/Summary'; // ✅ Ensure this accepts summaryText as prop
 
+// ✅ Zod schema for file validation
 const schema = z.object({
     file: z
         .custom<File>((file) => file instanceof File, { message: 'Invalid file' })
@@ -20,7 +21,8 @@ const schema = z.object({
 
 const Uploadform = () => {
     const [isLoading, setIsLoading] = useState(false);
-    const [summaryText, setSummaryText] = useState(''); // ✅ store summary
+    const [summaryText, setSummaryText] = useState(''); // ✅ Holds the generated summary
+
     const { startUpload } = useUploadThing('pdfUploader', {
         onClientUploadComplete: () => toast.success("Your PDF has been uploaded successfully"),
         onUploadError: (error: any) => {
@@ -47,8 +49,9 @@ const Uploadform = () => {
         }
 
         setIsLoading(true);
-        setSummaryText(""); // clear old summary
+        setSummaryText(""); // ✅ Clear old summary before generating a new one
 
+        // ✅ Start upload process
         const uploadToastId = toast.loading('Uploading PDF...');
         const resp = await startUpload([file]);
 
@@ -60,14 +63,24 @@ const Uploadform = () => {
 
         toast.success('PDF uploaded successfully!', { id: uploadToastId });
 
+        // ✅ Generate summary
         const summaryToastId = toast.loading('Generating summary...');
         const summary = await generatePdfSummary(resp);
 
-        if (!summary.success || !summary.data?.summaryText) {
+        if (!summary.success || !summary.data?.summary) {
             toast.error(summary.message ?? "Summary failed", { id: summaryToastId });
         } else {
             toast.success("Summary saved successfully", { id: summaryToastId });
-            setSummaryText(summary.data.summaryText); // ✅ Set summary in state
+
+            // ✅ Save summary to DB using correct fields
+            await storePdfSummaryAction({
+                summary: summary?.data.summary, // 🟢 Use correct summary text
+                fileUrl: resp[0].serverData.file.url, // 🟢 From UploadThing response
+                fileName: resp[0].serverData.file.name, // 🟢 Use uploaded filename
+                title: summary.data.title ?? "Untitled" // 🟢 Optional: use title or fallback
+            });
+
+            setSummaryText(summary?.data.summary); // ✅ Update UI with summary
         }
 
         setIsLoading(false);
@@ -77,7 +90,7 @@ const Uploadform = () => {
         <div className="flex flex-col gap-8 w-full max-w-2xl mx-auto">
             <UploadFormInput onSubmit={onSubmit} isLoading={isLoading} />
 
-            {/* ✅ Show summary if available */}
+            {/* ✅ Conditionally render summary */}
             {summaryText && (
                 <Summary summaryText={summaryText} />
             )}
@@ -92,11 +105,18 @@ interface UploadFormInputProps {
     isLoading: boolean;
 }
 
+// ✅ Reusable input form component
 const UploadFormInput: React.FC<UploadFormInputProps> = ({ onSubmit, isLoading }) => {
     return (
         <form className="flex flex-col gap-6" onSubmit={onSubmit}>
             <div className="flex justify-end items-center gap-1.5">
-                <Input type="file" id="file" name="file" accept="application/pdf" required />
+                <Input
+                    type="file"
+                    id="file"
+                    name="file"
+                    accept="application/pdf"
+                    required
+                />
                 <Button type="submit" disabled={isLoading}>
                     {isLoading ? "Processing..." : "Upload your PDF"}
                 </Button>
