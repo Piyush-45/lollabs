@@ -1,112 +1,63 @@
 import { prisma } from "@/lib/prisma";
-import { stripe } from "@/lib/stripe";
-import { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import Stripe from "stripe";
 
-const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET!;
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
+    apiVersion: "2025-02-24.acacia",
+});
 
-export const POST = async (req: NextRequest) => {
-    const body = await req.text();
-    const sig = req.headers.get("stripe-signature")!;
-
-    let event: Stripe.Event;
-
+export async function POST(req: Request) {
     try {
-        event = stripe.webhooks.constructEvent(body, sig, WEBHOOK_SECRET);
-    } catch (error) {
-        const err = error as Error;
-        console.error("Webhook signature verification failed:", err.message);
-        return new Response("Invalid signature", { status: 400 });
-    }
+        const payload = await req.text();
+        const sig = req.headers.get("stripe-signature")!;
+        const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
-    try {
-        switch (event.type) {
-            case "checkout.session.completed":
-                const session = await stripe.checkout.sessions.retrieve(
-                    (event.data.object as Stripe.Checkout.Session).id,
-                    {
-                        expand: ["line_items"],
-                    }
-                );
-
-                const customerId = session.customer as string;
-                const customerDetails = session.customer_details;
-
-                if (customerDetails?.email) {
-                    const user = await prisma.user.findUnique({
-                        where: { email: customerDetails.email },
-                    });
-
-                    if (!user) throw new Error("User not found");
-
-                    // Save customerId if not saved
-                    if (!user.customerId) {
-                        await prisma.user.update({
-                            where: { id: user.id },
-                            data: { customerId },
-                        });
-                    }
-
-                    const lineItems = session.line_items?.data || [];
-
-                    for (const item of lineItems) {
-                        const priceId = item.price?.id;
-                        const isSubscription = item.price?.type === "recurring";
-                        const amount = item.amount_total || 0;
-
-                        if (!priceId) throw new Error("Missing priceId");
-
-                        if (isSubscription) {
-                            // Calculate end date
-                            let endDate = new Date();
-                            if (priceId === process.env.STRIPE_YEARLY_PRICEID) {
-                                endDate.setFullYear(endDate.getFullYear() + 1);
-                            } else if (priceId === process.env.STRIPE_MONTHLY_PRICEID) {
-                                endDate.setMonth(endDate.getMonth() + 1);
-                            } else {
-                                throw new Error("Invalid priceId");
-                            }
-
-                            // Upsert Payment
-                            await prisma.payment.upsert({
-                                where: { stripePaymentId: session.payment_intent as string },
-                                create: {
-                                    stripePaymentId: session.payment_intent as string,
-                                    amount,
-                                    status: "completed",
-                                    userEmail: user.email,
-                                    priceId,
-                                },
-                                update: {
-                                    status: "completed",
-                                    amount,
-                                    priceId,
-                                },
-                            });
-
-                            // Update user status and priceId
-                            await prisma.user.update({
-                                where: { id: user.id },
-                                data: {
-                                    status: "active",
-                                    priceId,
-                                },
-                            });
-                        } else {
-                            console.log("Non-subscription item purchased. Skipping...");
-                        }
-                    }
-                }
-
-                break;
-
-            default:
-                console.log(`Unhandled event type ${event.type}`);
+        let event: Stripe.Event;
+        try {
+            event = stripe.webhooks.constructEvent(payload, sig, endpointSecret);
+        } catch (err: any) {
+            console.error("Webhook signature verification failed:", err.message);
+            return new NextResponse(`Webhook Error: ${err.message}`, { status: 400 });
         }
 
-        return new Response("Received", { status: 200 });
+        if (event.type === "checkout.session.completed") {
+            const session = event.data.object as Stripe.Checkout.Session;
+
+            if (!session.customer_email || !session.amount_total || !session.id) {
+                console.error("Missing required fields in Stripe session:", session);
+                return new NextResponse("Invalid Stripe session data", { status: 400 });
+            }
+
+            const foundUser = await prisma.user.findUnique({
+                where: { email: session.customer_email },
+            });
+
+            if (!foundUser) {
+                console.error("User not found for email:", session.customer_email);
+                return new NextResponse("User not found", { status: 404 });
+            }
+
+            // Store the payment record
+            await prisma.payment.create({
+                data: {
+                    userEmail: foundUser.email, // Keeping userEmail instead of userId
+                    amount: session.amount_total, // Amount in INR (paisa), ensure correct handling in UI
+                    status: "paid",
+                    stripePaymentId: session.id,
+                    priceId: session.metadata?.priceId ?? "unknown",
+                },
+            });
+
+            // Update user status to "active" and store priceId
+            await prisma.user.update({
+                where: { email: foundUser.email },
+                data: { status: "active", priceId: session.metadata?.priceId ?? null },
+            });
+        }
+
+        return new NextResponse("Webhook received", { status: 200 });
     } catch (error) {
-        console.error("Webhook handler error:", (error as Error).message);
-        return new Response("Webhook handler failed", { status: 500 });
+        console.error("Error in Stripe webhook:", error);
+        return new NextResponse("Internal Server Error", { status: 500 });
     }
-};
+}
