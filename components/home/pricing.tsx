@@ -5,72 +5,75 @@ import Link from "next/link";
 type PriceType = {
     name: string;
     price: number;
+    duration: 'month' | 'year'; // <-- added duration
     description?: string;
     items: string[];
     id: string;
     paymentLink: string;
     priceId: string;
 };
-const plans = [
+
+const plans: PriceType[] = [
     {
         id: 'basic',
         name: 'Basic',
-        price: 0,
+        price: 99,
+        duration: 'month',
         items: [
             '5 PDF summaries per month',
             'Standard processing speed',
             'Email support',
         ],
-        paymentLink: '',
-        priceId: ''
+        paymentLink: process.env.STRIPE_MONTHLY_PLAN_LINK || '#',
+        priceId: process.env.STRIPE_MONTHLY_PRICEID || '',
     },
     {
         id: 'pro',
         name: 'Pro',
-        price: 599,
+        price: 299,
+        duration: 'year',
         items: [
             'Unlimited PDF summaries',
             'Priority processing',
             '24/7 priority support',
-
         ],
-        paymentLink: '',
-        priceId: ''
+        paymentLink: process.env.STRIPE_YEARLY_PLAN_LINK || '#',
+        priceId: process.env.STRIPE_YEARLY_PRICEID || '',
     },
 ];
 
-const PricingCard = ({ name,
+const PricingCard = ({
+    name,
     price,
+    duration,
     description,
     items,
     id,
     paymentLink,
-    priceId }: PriceType) => {
+    priceId,
+}: PriceType) => {
     return (
         <div className="relative w-full max-w-lg hover:scale-105 hover:transition-all duration-300">
-            <div className={cn("relative flex flex-col h-fit gap-4 lg:gap-8 z-10 p-8 rounded-xl border-[1px] border-gray-500/20 ", id === 'pro' && 'border-rose-500 gap-5 border-2')}>
-
+            <div
+                className={cn(
+                    "relative flex flex-col h-fit gap-4 lg:gap-8 z-10 p-8 rounded-xl border-[1px] border-gray-500/20",
+                    id === "pro" && "border-rose-500 gap-5 border-2"
+                )}
+            >
                 <div className="flex justify-between items-center gap-4">
                     <div>
-                        <p className="text-lg lg:text-xl font-bold capitalize">
-                            {name}
-                        </p>
-                        <p className="text-base-content/80 mt-2">
-                            {description}
-                        </p>
+                        <p className="text-lg lg:text-xl font-bold capitalize">{name}</p>
+                        <p className="text-base-content/80 mt-2">{description}</p>
                     </div>
                 </div>
 
                 <div className="flex gap-2">
-                    <p className="text-5xl tracking-tight font-extrabold">
-                        Rs.{price}
-                    </p>
+                    <p className="text-5xl tracking-tight font-extrabold">Rs.{price}</p>
                     <div className="flex flex-col justify-end mb-[4px]">
                         <p className="text-xs uppercase font-semibold">INR</p>
-                        <p className="text-xs">/month</p>
+                        <p className="text-xs">/{duration}</p>
                     </div>
                 </div>
-
 
                 <div className="space-y-2.5 leading-relaxed text-base flex-1">
                     {items.map((item, idx) => (
@@ -85,17 +88,15 @@ const PricingCard = ({ name,
                     <Link
                         href={paymentLink}
                         className="w-full rounded-full flex items-center justify-center gap-2 bg-gradient-to-r from-rose-800 to-rose-500 
-  hover:from-rose-500 hover:to-rose-800 
-  text-white border-2 py-2"
+                            hover:from-rose-500 hover:to-rose-800 
+                            text-white border-2 py-2"
                     >
                         Buy Now <ArrowRight size={18} />
                     </Link>
-
                 </div>
             </div>
         </div>
     );
-
 };
 
 export default function PricingSection() {
@@ -115,6 +116,5 @@ export default function PricingSection() {
                 </div>
             </div>
         </section>
-
     );
 }
